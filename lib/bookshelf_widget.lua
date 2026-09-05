@@ -13410,7 +13410,12 @@ end
 -- uppercased, taken from OpdsDownload.filenameFor rather than a second MIME
 -- table here so the label can never disagree with the filename produced.
 local function opdsAcquisitionLabel(book, acq)
-    if type(acq.title) == "string" and acq.title ~= "" then return acq.title end
+    if type(acq.title) == "string" and acq.title ~= "" then
+        -- Match the stock OPDS browser, which decodes an acquisition link's
+        -- title before showing it. Some servers put the URL-escaped filename
+        -- here, which otherwise leaks %E5%... into the Download button.
+        return require("socket.url").unescape(acq.title)
+    end
     local ok_d, D = pcall(require, "lib/bookshelf_opds_download")
     local name = ok_d and D.filenameFor(book, acq) or nil
     local ext = type(name) == "string" and name:match("%.([^.]+)$") or nil
@@ -13890,7 +13895,25 @@ function BookshelfWidget:_opdsStartDownload(book, acq, dialog)
     if dest then
         name = dest:match("([^/]+)$")
     else
-        name = util.getSafeFilename(D.filenameFor(book, acq), dir)
+        local filename = D.filenameFor(book, acq)
+        local key = type(book.filepath) == "string"
+            and book.filepath:match("^OPDS://([^/]+)/") or nil
+        local OpdsSource = require("lib/bookshelf_opds_source")
+        local OpdsFeed = require("lib/bookshelf_opds_feed")
+        local server = key and OpdsSource.getServer(key) or nil
+        if server and server.raw_names then
+            -- This is deliberately the stock browser's pre-download HEAD
+            -- lookup: server names decide the *target path*, so it has to run
+            -- before the overwrite prompt and before the GET opens a file.
+            local same_origin = OpdsFeed.sameOrigin(server.url, acq.href)
+            local server_name = D.serverFilename(acq.href, acq.type,
+                same_origin and server.username or nil,
+                same_origin and server.password or nil)
+            if type(server_name) == "string" and server_name ~= "" then
+                filename = server_name
+            end
+        end
+        name = util.getSafeFilename(filename, dir)
         dest = (dir ~= "/" and dir or "") .. "/" .. name
         -- Don't offer to overwrite a file that belongs to a DIFFERENT catalog
         -- record: filenameFor is author + title + format and getSafeFilename
@@ -14982,7 +15005,7 @@ function BookshelfWidget:_buildPillSpecs(book, collection_set, close_cb, filter)
     end
     table.sort(coll_names, function(a, b) return a:lower() < b:lower() end)
     for _i, coll_name in ipairs(_show("collections") and coll_names or {}) do
-        local display = (coll_name == default_coll_name) and _("Favourites") or coll_name
+        local display = (coll_name == default_coll_name) and _("Favorites") or coll_name
         pill_specs[#pill_specs + 1] = {
             cat    = "collections",
             label  = display,
@@ -15019,7 +15042,7 @@ function BookshelfWidget:_buildPillSpecs(book, collection_set, close_cb, filter)
             _seen[coll_name:lower()] = true
             -- Localised display too -- "Favourites" UI label could collide
             -- with a same-named genre.
-            local display = (coll_name == default_coll_name) and _("Favourites") or coll_name
+            local display = (coll_name == default_coll_name) and _("Favorites") or coll_name
             _seen[display:lower()] = true
         end
         for _i, genre_name in ipairs(book.genres) do
@@ -16158,7 +16181,7 @@ function BookshelfWidget:_buildBookEditTab(book, modal, avail_w, avail_h)
                 return HorizontalGroup:new{ align = "center",
                     TextWidget:new{ text = glyph, face = check_face, fgcolor = Blitbuffer.COLOR_BLACK },
                     HorizontalSpan:new{ width = Screen:scaleBySize(10) },
-                    TextWidget:new{ text = _("Favourite"), face = row_face, bold = true },
+                    TextWidget:new{ text = _("Favorite"), face = row_face, bold = true },
                 }
             end
             local remove_label = TextWidget:new{ text = _("Remove from history"),
